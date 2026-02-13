@@ -7,6 +7,7 @@ export default defineConfig({
             '@': path.resolve(__dirname, './src'),
         },
     },
+    base: '/sofik-game-peachy/', // Set the base path for GitHub Pages
     server: {
         host: true, // Listen on all local IPs
         port: 5173,
