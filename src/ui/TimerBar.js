@@ -18,7 +18,8 @@ export class TimerBar extends Container {
         // Background
         const bg = new Graphics()
             .rect(0, 0, this.barWidth, this.barHeight)
-            .fill({ color: 0x333333, alpha: 0.5 });
+            .fill({ color: 0x333333, alpha: 0.5 })
+            .stroke({ width: 4, color: 0x000000 });
         this.addChild(bg);
 
         // Fill

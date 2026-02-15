@@ -9,13 +9,16 @@ export class NPC extends Container {
         this.needsItem = true;
 
         // Movement state
-        this.state = 'idle'; // 'idle', 'moving'
+        this.state = 'idle'; // 'idle', 'moving', 'satisfied'
         this.idleTimer = 0;
         this.moveTarget = { x: 0, y: 0 };
         this.moveSpeed = CONFIG.PLAYER_SPEED * 0.2; // Slower
         this.maxMoveDistance = 200; // Longer range
         this.homePos = { x: 0, y: 0 }; // Will be set on first update if not set
         this.wobbleTime = 0;
+
+        // Cooldown state
+        this.cooldownTimer = 0;
 
         // Visuals
         this.sprite = Sprite.from('npc');
@@ -34,6 +37,23 @@ export class NPC extends Container {
         this.heart.scale.set(0.8);
         this.heart.visible = false;
         this.addChild(this.heart);
+
+        // Cooldown Bar
+        this.cooldownBar = new Container();
+        this.cooldownBar.y = -this.radius - 40;
+        this.cooldownBar.visible = false;
+        this.addChild(this.cooldownBar);
+
+        // Cooldown Bar Background
+        const bg = new Graphics()
+            .rect(-30, 0, 60, 10)
+            .fill(0x333333)
+            .stroke({ width: 2, color: 0x000000 });
+        this.cooldownBar.addChild(bg);
+
+        // Cooldown Bar Fill
+        this.cooldownFill = new Graphics();
+        this.cooldownBar.addChild(this.cooldownFill);
     }
 
     update(delta) {
@@ -46,10 +66,54 @@ export class NPC extends Container {
             this.heart.rotation = Math.sin(Date.now() * 0.02) * 0.2; // Shake
         }
 
+        // Cooldown Logic
+        if (this.state === 'satisfied') {
+            this.cooldownTimer -= delta * 16.66; // Convert delta (ticks) to ms approximation? Or just use delta directly if delta is in seconds? 
+            // Pixi ticker.deltaTime is strictly frame-based. Scene passes delta.
+            // Let's assume GameScene passes delta in "frame factor" where 1.0 = 60fps.
+            // So delta * 16.66 ~= ms. 
+            // Wait, GameScene uses ticker.deltaMS for timer. Let's rely on standard ticker usage or passed delta.
+            // GameScene passes 'delta' derived from ticker.deltaTime.
+
+            // Actually, let's use a simpler decrement based on frame count or pass actual time delta.
+            // For now, let's assume update(delta) receives collision-step delta.
+            // To be precise, let's modify update signature in GameScene if needed, or just standard decrement.
+            // If delta is 1.0 (60fps), we need to decrement 16.6ms.
+            this.cooldownTimer -= (delta * 16.666);
+
+            if (this.cooldownTimer <= 0) {
+                this.resetToIdle();
+            } else {
+                // Update Bar
+                const ratio = this.cooldownTimer / CONFIG.NPC_COOLDOWN;
+                this.cooldownFill.clear()
+                    .rect(-28, 2, 56 * ratio, 6)
+                    .fill(0x3498db);
+            }
+            return; // Don't move while satisfied
+        }
+
         if (this.state === 'idle') {
             this.handleIdle(delta);
         } else if (this.state === 'moving') {
             this.handleMoving(delta);
+        }
+    }
+
+    resetToIdle() {
+        this.state = 'idle';
+        this.needsItem = true;
+        this.sprite.tint = 0xffffff;
+        this.heart.visible = false;
+        this.cooldownBar.visible = false;
+
+        // Remove item sprite if any
+        // The last child added in receiveItem was the item sprite
+        // But we have other children now (cooldownBar).
+        // Let's track the item sprite reference.
+        if (this.heldItemSprite) {
+            this.removeChild(this.heldItemSprite);
+            this.heldItemSprite = null;
         }
     }
 
@@ -65,8 +129,10 @@ export class NPC extends Container {
 
             // Clamp to screen bounds
             const margin = this.radius + 10;
+            const topMargin = Math.max(margin, CONFIG.UI_TOP_MARGIN);
+
             this.moveTarget.x = Math.max(margin, Math.min(CONFIG.DESIGN_WIDTH - margin, this.moveTarget.x));
-            this.moveTarget.y = Math.max(margin, Math.min(CONFIG.DESIGN_HEIGHT - margin, this.moveTarget.y));
+            this.moveTarget.y = Math.max(topMargin, Math.min(CONFIG.DESIGN_HEIGHT - margin, this.moveTarget.y));
 
             this.state = 'moving';
             this.wobbleTime = 0;
@@ -103,6 +169,10 @@ export class NPC extends Container {
         this.sprite.tint = CONFIG.COLORS.NPC_SATISFIED;
         this.heart.visible = true;
 
+        // Cooldown init
+        this.cooldownTimer = CONFIG.NPC_COOLDOWN;
+        this.cooldownBar.visible = true;
+
         // Show Held Item
         const itemSprite = Sprite.from('item');
         itemSprite.anchor.set(0.5);
@@ -112,5 +182,6 @@ export class NPC extends Container {
         itemSprite.scale.set(itemSprite.scale.x * 0.8);
 
         this.addChild(itemSprite);
+        this.heldItemSprite = itemSprite; // Store ref to remove later
     }
 }

@@ -1,4 +1,4 @@
-import { Container, Graphics, Text, Ticker, TextStyle } from 'pixi.js';
+import { Container, Graphics, Text, Ticker, TextStyle, TilingSprite, Assets, Rectangle } from 'pixi.js';
 import { CONFIG } from '../config/GameConfig.js';
 import { Player } from '../entities/Player.js';
 import { Item } from '../entities/Item.js';
@@ -13,12 +13,25 @@ import { MenuScene } from './MenuScene.js';
 export class GameScene {
     constructor(game) {
         this.game = game;
+
+        // Main container holds both world and UI
         this.container = new Container();
+
+        // World Container (Background, Entities in Z-order)
+        this.worldContainer = new Container();
+        this.worldContainer.sortableChildren = true; // For entities Y-sorting if needed later
+        this.container.addChild(this.worldContainer);
+
+        // UI Container (Always on top)
+        this.uiContainer = new Container();
+        this.container.addChild(this.uiContainer);
+
         this.items = [];
         this.bonusItems = [];
         this.npcs = [];
         this.state = 'playing'; // playing, won, lost
         this.timeLeft = CONFIG.TIME_LIMIT;
+        this.score = 0;
 
         this.isMobile = this.detectMobile();
     }
@@ -60,32 +73,73 @@ export class GameScene {
         this.joystick.x = 100;
         this.joystick.y = CONFIG.DESIGN_HEIGHT - 100;
 
-        this.container.addChild(this.joystick);
+        this.uiContainer.addChild(this.joystick);
         this.input.setJoystick(this.joystick);
     }
 
     createBackground() {
-        this.bg = new Graphics()
-            .rect(0, 0, CONFIG.DESIGN_WIDTH, CONFIG.DESIGN_HEIGHT)
-            .fill(CONFIG.COLORS.BACKGROUND);
-        this.container.addChild(this.bg);
+        try {
+            const texture = Assets.get('grass');
+            if (texture) {
+                this.bg = new TilingSprite({
+                    texture,
+                    width: CONFIG.DESIGN_WIDTH,
+                    height: CONFIG.DESIGN_HEIGHT
+                });
+            } else {
+                // Fallback: Generate procedural grass texture
+                const grassGfx = new Graphics();
+                grassGfx.rect(0, 0, 64, 64).fill(0x2ecc71); // Base green
+
+                // Add some "noise" blades of grass
+                for (let i = 0; i < 20; i++) {
+                    const x = Math.random() * 64;
+                    const y = Math.random() * 64;
+                    const h = 4 + Math.random() * 4;
+                    grassGfx.moveTo(x, y).lineTo(x, y - h).stroke({ width: 1, color: 0x27ae60 });
+                }
+
+                // Create texture from graphics
+                // Use a fixed region to strictly bound the texture to 64x64, ignoring any out-of-bounds strokes
+                const grassTexture = this.game.app.renderer.generateTexture({
+                    target: grassGfx,
+                    frame: new Rectangle(0, 0, 64, 64)
+                });
+
+                this.bg = new TilingSprite({
+                    texture: grassTexture,
+                    width: CONFIG.DESIGN_WIDTH,
+                    height: CONFIG.DESIGN_HEIGHT
+                });
+            }
+        } catch (e) {
+            this.bg = new Graphics()
+                .rect(0, 0, CONFIG.DESIGN_WIDTH, CONFIG.DESIGN_HEIGHT)
+                .fill(CONFIG.COLORS.BACKGROUND);
+        }
+
+        this.worldContainer.addChild(this.bg);
     }
 
     spawnPlayer() {
         this.player = new Player();
         this.player.x = CONFIG.DESIGN_WIDTH / 2;
         this.player.y = CONFIG.DESIGN_HEIGHT / 2;
-        this.container.addChild(this.player);
+        this.worldContainer.addChild(this.player);
     }
 
     spawnItems() {
         for (let i = 0; i < CONFIG.ITEM_COUNT; i++) {
-            const item = new Item();
-            item.x = MathUtils.randomRange(100, CONFIG.DESIGN_WIDTH - 100);
-            item.y = MathUtils.randomRange(200, CONFIG.DESIGN_HEIGHT - 200);
-            this.container.addChild(item);
-            this.items.push(item);
+            this.createItem();
         }
+    }
+
+    createItem() {
+        const item = new Item();
+        item.x = MathUtils.randomRange(100, CONFIG.DESIGN_WIDTH - 100);
+        item.y = MathUtils.randomRange(200, CONFIG.DESIGN_HEIGHT - 200);
+        this.worldContainer.addChild(item);
+        this.items.push(item);
     }
 
     spawnBonusItems() {
@@ -98,18 +152,19 @@ export class GameScene {
         const item = new BonusItem();
         item.x = MathUtils.randomRange(100, CONFIG.DESIGN_WIDTH - 100);
         item.y = MathUtils.randomRange(200, CONFIG.DESIGN_HEIGHT - 200);
-        this.container.addChild(item);
+        this.worldContainer.addChild(item);
         this.bonusItems.push(item);
     }
 
     spawnNPCs() {
         const padding = 80;
+        const topPadding = CONFIG.UI_TOP_MARGIN;
         const width = CONFIG.DESIGN_WIDTH;
         const height = CONFIG.DESIGN_HEIGHT;
 
         const positions = [
-            { x: padding, y: padding }, // Top-Left
-            { x: width - padding, y: padding }, // Top-Right
+            { x: padding, y: topPadding }, // Top-Left
+            { x: width - padding, y: topPadding }, // Top-Right
             { x: padding, y: height - padding }, // Bottom-Left
             { x: width - padding, y: height - padding } // Bottom-Right
         ];
@@ -119,7 +174,7 @@ export class GameScene {
             const pos = positions[i] || { x: width / 2, y: height / 2 };
             npc.x = pos.x;
             npc.y = pos.y;
-            this.container.addChild(npc);
+            this.worldContainer.addChild(npc);
             this.npcs.push(npc);
         }
     }
@@ -135,20 +190,28 @@ export class GameScene {
         this.timerText = new Text({ text: `Time: ${this.timeLeft}`, style });
         this.timerText.x = 20;
         this.timerText.y = 20;
-        this.container.addChild(this.timerText);
+        this.uiContainer.addChild(this.timerText);
+
+        // Score Text
+        this.scoreText = new Text({ text: `Score: ${this.score} / ${CONFIG.SCORE_TARGET}`, style });
+        this.scoreText.anchor.set(1, 0); // Top-right aligned
+        this.scoreText.x = CONFIG.DESIGN_WIDTH - 20;
+        this.scoreText.y = 20;
+        this.uiContainer.addChild(this.scoreText);
 
         // Timer Bar
         this.timerBar = new TimerBar(CONFIG.TIME_LIMIT);
         this.timerBar.x = (CONFIG.DESIGN_WIDTH - this.timerBar.barWidth) / 2;
         this.timerBar.y = 70;
-        this.container.addChild(this.timerBar);
+        this.uiContainer.addChild(this.timerBar);
 
         this.statusText = new Text({ text: '', style: { ...style, fontSize: 60, align: 'center' } });
         this.statusText.anchor.set(0.5);
         this.statusText.x = CONFIG.DESIGN_WIDTH / 2;
         this.statusText.y = CONFIG.DESIGN_HEIGHT / 2;
         this.statusText.visible = false;
-        this.container.addChild(this.statusText);
+
+        this.uiContainer.addChild(this.statusText);
     }
 
     update(ticker) {
@@ -200,6 +263,9 @@ export class GameScene {
                     if (this.player.pickup(item)) {
                         // Item picked up, remove from active items list
                         this.items.splice(i, 1);
+
+                        // Respawn new item after 3s
+                        setTimeout(() => this.createItem(), 3000);
                         break;
                     }
                 }
@@ -217,7 +283,8 @@ export class GameScene {
                 item.destroy();
                 this.bonusItems.splice(i, 1);
 
-                setTimeout(() => this.createBonusItem(), 5000 + Math.random() * 5000);
+                // Respawn bonus item after 3s
+                setTimeout(() => this.createBonusItem(), 3000);
             }
         }
 
@@ -234,6 +301,10 @@ export class GameScene {
                         // Destroy item (cleanup)
                         if (deliveredItem) deliveredItem.destroy();
 
+                        // Score Update
+                        this.score += CONFIG.SCORE_PER_DELIVERY;
+                        this.scoreText.text = `Score: ${this.score} / ${CONFIG.SCORE_TARGET}`;
+
                         this.checkWinCondition();
                         break;
                     }
@@ -243,16 +314,36 @@ export class GameScene {
     }
 
     checkWinCondition() {
-        const allSatisfied = this.npcs.every(npc => !npc.needsItem);
-        if (allSatisfied) {
+        if (this.score >= CONFIG.SCORE_TARGET) {
             this.gameOver(true);
         }
     }
 
     gameOver(win) {
         this.state = win ? 'won' : 'lost';
-        this.statusText.text = win ? 'YOU WIN!' : 'GAME OVER';
-        this.statusText.style.fill = win ? 0x2ecc71 : 0xe74c3c;
+
+        if (win) {
+            this.statusText.text = 'Вітаємо!\nВи розблокували значок\n"Сила Добра!"';
+            this.statusText.style = new TextStyle({
+                fontFamily: 'Arial',
+                fontSize: 36, // Reduced font size for longer text
+                fontWeight: 'bold',
+                fill: 0x2ecc71, // Green
+                align: 'center',
+                stroke: { color: 0x000000, width: 4 }
+            });
+        } else {
+            this.statusText.text = 'GAME OVER';
+            this.statusText.style = new TextStyle({
+                fontFamily: 'Arial',
+                fontSize: 60,
+                fontWeight: 'bold',
+                fill: 0xe74c3c, // Red
+                align: 'center',
+                stroke: { color: 0x000000, width: 4 }
+            });
+        }
+
         this.statusText.visible = true;
 
         // Hide joystick
@@ -261,7 +352,7 @@ export class GameScene {
         // Return to menu after delay
         setTimeout(() => {
             this.game.sceneManager.changeScene(new MenuScene(this.game));
-        }, 3000);
+        }, 4000); // Increased delay slightly to read message
     }
 
     destroy() {
